@@ -1,5 +1,5 @@
 {
-  "name": "tauri-app",
+  "name": "adb-wireless-device-farm",
   "private": true,
   "version": "0.1.2",
   "type": "module",

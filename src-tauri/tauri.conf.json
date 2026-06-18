@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
-  "version": "0.1.2",
-  "identifier": "com.endri-pro.tauri-app",
+  "productName": "ADB Wireless Device Farm",
+  "version": "0.1.0",
+  "identifier": "com.endrisusanto.adb-wireless-device-farm",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-app",
+        "title": "ADB Wireless Device Farm",
         "width": 800,
         "height": 600
       }
