@@ -35,8 +35,9 @@ function App() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [manualIps, setManualIps] = useState<Record<string, string>>({});
   const [brightnessValues, setBrightnessValues] = useState<Record<string, number>>({});
-  const [filterUsb, setFilterUsb] = useState<boolean>(true);
-  const [filterWireless, setFilterWireless] = useState<boolean>(true);
+  // ponytail: accordion open state per group
+  const [openUsb, setOpenUsb] = useState<boolean>(true);
+  const [openWireless, setOpenWireless] = useState<boolean>(true);
   
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const logIdCounter = useRef<number>(0);
@@ -192,23 +193,7 @@ function App() {
         <section className="devices-pane">
           <div className="pane-header">
             <h3>Connected Devices</h3>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "0.6875rem", cursor: "pointer", color: "var(--text-secondary)" }}>
-                <input type="checkbox" checked={filterUsb} onChange={(e) => setFilterUsb(e.target.checked)} style={{ width: "12px", height: "12px" }} />
-                USB
-              </label>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "0.6875rem", cursor: "pointer", color: "var(--text-secondary)" }}>
-                <input type="checkbox" checked={filterWireless} onChange={(e) => setFilterWireless(e.target.checked)} style={{ width: "12px", height: "12px" }} />
-                Wireless
-              </label>
-              <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", marginLeft: "4px" }}>
-                ({devices.filter(d => {
-                  if (d.connection_type === "usb" && !filterUsb) return false;
-                  if (d.connection_type === "wireless" && !filterWireless) return false;
-                  return true;
-                }).length} shown)
-              </span>
-            </div>
+            <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)" }}>{devices.length} device(s)</span>
           </div>
 
           <div className="device-list">
@@ -227,175 +212,173 @@ function App() {
                 )}
               </div>
             ) : (
-              devices
-                .filter((device) => {
-                  if (device.connection_type === "usb" && !filterUsb) return false;
-                  if (device.connection_type === "wireless" && !filterWireless) return false;
-                  return true;
-                })
-                .map((device) => {
-                  const isWireless = device.connection_type === "wireless";
-                  const currentIp = manualIps[device.serial] || "";
+              ["usb", "wireless"].map((groupType) => {
+                const groupDevices = devices.filter(d => d.connection_type === groupType);
+                const isOpen = groupType === "usb" ? openUsb : openWireless;
+                const setOpen = groupType === "usb" ? setOpenUsb : setOpenWireless;
+                const label = groupType === "usb" ? "USB" : "Wireless";
 
-                  return (
-                    <div key={device.serial} className={`device-card ${isWireless ? "wireless-card" : "usb-card"}`}>
-                    <div className="device-card-top">
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span className="device-id">{device.serial}</span>
-                        <span className={`badge ${isWireless ? "active-badge" : ""}`}>
-                          {device.connection_type}
-                        </span>
-                      </div>
+                return (
+                  <div key={groupType} className="accordion-group">
+                    {/* Accordion Header */}
+                    <button
+                      id={`accordion-${groupType}`}
+                      className={`accordion-header ${groupType === "usb" ? "usb-header" : "wireless-header"}`}
+                      onClick={() => setOpen(!isOpen)}
+                    >
+                      <span className="accordion-label">
+                        <span className="accordion-icon">{groupType === "usb" ? "🔌" : "📡"}</span>
+                        {label} Devices
+                      </span>
+                      <span className="accordion-meta">
+                        <span className="accordion-count">{groupDevices.length}</span>
+                        <span className={`accordion-chevron ${isOpen ? "open" : ""}`}>▾</span>
+                      </span>
+                    </button>
 
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        {!isWireless && (
-                          <input
-                            id={`ip-input-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                            type="text"
-                            value={currentIp}
-                            onChange={(e) => setManualIps({ ...manualIps, [device.serial]: e.target.value })}
-                            placeholder="IP Address"
-                            style={{ width: "95px", padding: "2px 4px", fontSize: "0.625rem" }}
-                          />
-                        )}
-                        {isWireless ? (
-                          <button
-                            id={`disconnect-btn-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                            onClick={() => handleDisconnectWireless(device.ip)}
-                          >
-                            Disconnect
-                          </button>
+                    {/* Accordion Content */}
+                    {isOpen && (
+                      <div className="accordion-body">
+                        {groupDevices.length === 0 ? (
+                          <div className="accordion-empty">No {label.toLowerCase()} devices connected.</div>
                         ) : (
-                          <button
-                            id={`connect-btn-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                            className="primary"
-                            onClick={() => handleConnectWireless(device.serial)}
-                            disabled={!currentIp.trim()}
-                          >
-                            Pair Wireless
-                          </button>
+                          groupDevices.map((device) => {
+                            const isWireless = device.connection_type === "wireless";
+                            const currentIp = manualIps[device.serial] || "";
+                            return (
+                              <div key={device.serial} className={`device-card ${isWireless ? "wireless-card" : "usb-card"}`}>
+                                <div className="device-card-top">
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <span className="device-id">{device.serial}</span>
+                                    <span className={`badge ${isWireless ? "active-badge" : ""}`}>
+                                      {device.connection_type}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    {!isWireless && (
+                                      <input
+                                        id={`ip-input-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
+                                        type="text"
+                                        value={currentIp}
+                                        onChange={(e) => setManualIps({ ...manualIps, [device.serial]: e.target.value })}
+                                        placeholder="IP Address"
+                                        style={{ width: "95px", padding: "2px 4px", fontSize: "0.625rem" }}
+                                      />
+                                    )}
+                                    {isWireless ? (
+                                      <button
+                                        id={`disconnect-btn-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
+                                        onClick={() => handleDisconnectWireless(device.ip)}
+                                      >
+                                        Disconnect
+                                      </button>
+                                    ) : (
+                                      <button
+                                        id={`connect-btn-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
+                                        className="primary"
+                                        onClick={() => handleConnectWireless(device.serial)}
+                                        disabled={!currentIp.trim()}
+                                      >
+                                        Pair Wireless
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Proplist Grid */}
+                                <div className="device-details-grid">
+                                  <div className="detail-item">
+                                    <span className="detail-label">Model</span>
+                                    <span className="detail-value" title={device.properties.model}>{device.properties.model || "N/A"}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">Android</span>
+                                    <span className="detail-value" title={device.properties.release}>{device.properties.release || "N/A"}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">SDK</span>
+                                    <span className="detail-value" title={device.properties.sdk}>{device.properties.sdk || "N/A"}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">Security</span>
+                                    <span className="detail-value" title={device.properties.security_patch}>{device.properties.security_patch || "N/A"}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">Sales Code</span>
+                                    <span className="detail-value" title={device.properties.sales_code}>{device.properties.sales_code || "N/A"}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">PDA</span>
+                                    <span className="detail-value" title={device.properties.pda}>{device.properties.pda || "N/A"}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">SW Ver</span>
+                                    <span className="detail-value" title={device.properties.sw_ver}>{device.properties.sw_ver || "N/A"}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">CSC Ver</span>
+                                    <span className="detail-value" title={device.properties.official_cscver}>{device.properties.official_cscver || "N/A"}</span>
+                                  </div>
+                                  <div className="detail-item" style={{ gridColumn: "span 3" }}>
+                                    <span className="detail-label">Fingerprint</span>
+                                    <span className="detail-value" title={device.properties.fingerprint}>{device.properties.fingerprint || "N/A"}</span>
+                                  </div>
+                                </div>
+
+                                {/* Control Row */}
+                                <div className="device-card-controls">
+                                  <div>
+                                    <div className="control-label" style={{ marginBottom: "2px" }}>Screen Brightness</div>
+                                    <div className="control-row">
+                                      <input
+                                        id={`brightness-range-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
+                                        type="range" min="0" max="255"
+                                        value={brightnessValues[device.serial] ?? 128}
+                                        onChange={(e) => setBrightnessValues({ ...brightnessValues, [device.serial]: parseInt(e.target.value) })}
+                                        onMouseUp={() => handleSetBrightness(device.serial, brightnessValues[device.serial])}
+                                        onTouchEnd={() => handleSetBrightness(device.serial, brightnessValues[device.serial])}
+                                      />
+                                      <span className="slider-val">{brightnessValues[device.serial] ?? 128}</span>
+                                      <button id={`bright-min-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`} onClick={() => handleSetBrightness(device.serial, 5)} style={{ padding: "2px 4px", fontSize: "0.625rem" }}>Min</button>
+                                      <button id={`bright-max-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`} onClick={() => handleSetBrightness(device.serial, 255)} style={{ padding: "2px 4px", fontSize: "0.625rem" }}>Max</button>
+                                    </div>
+                                  </div>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: "8px", marginTop: "4px" }}>
+                                    <div style={{ flex: 1 }}>
+                                      <div className="control-label" style={{ marginBottom: "2px" }}>Screen Timeout</div>
+                                      <div className="control-row" style={{ gap: "4px" }}>
+                                        <select
+                                          id={`timeout-select-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
+                                          onChange={(e) => handleSetTimeout(device.serial, parseInt(e.target.value))}
+                                          defaultValue="60000"
+                                          style={{ height: "20px", padding: "0 14px 0 4px", fontSize: "0.625rem" }}
+                                        >
+                                          <option value="15000">15 sec</option>
+                                          <option value="60000">1 min</option>
+                                          <option value="300000">5 min</option>
+                                          <option value="600000">10 min</option>
+                                          <option value="1800000">30 min</option>
+                                          <option value="2147483647">Keep Awake</option>
+                                        </select>
+                                        <button id={`timeout-min-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`} onClick={() => handleSetTimeout(device.serial, 15000)} style={{ padding: "2px 4px", fontSize: "0.625rem" }}>Min</button>
+                                        <button id={`timeout-max-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`} onClick={() => handleSetTimeout(device.serial, 2147483647)} style={{ padding: "2px 4px", fontSize: "0.625rem" }}>Max</button>
+                                      </div>
+                                    </div>
+                                    <button
+                                      id={`scrcpy-btn-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
+                                      onClick={() => handleStartScrcpy(device.serial)}
+                                      style={{ height: "20px", padding: "0 8px", background: "#ffffff", color: "#000000", border: "1px solid #ffffff" }}
+                                    >
+                                      Mirror View
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
                         )}
                       </div>
-                    </div>
-
-                    {/* Proplist Grid */}
-                    <div className="device-details-grid">
-                      <div className="detail-item">
-                        <span className="detail-label">Model</span>
-                        <span className="detail-value" title={device.properties.model}>{device.properties.model || "N/A"}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="detail-label">Android</span>
-                        <span className="detail-value" title={device.properties.release}>{device.properties.release || "N/A"}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="detail-label">SDK</span>
-                        <span className="detail-value" title={device.properties.sdk}>{device.properties.sdk || "N/A"}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="detail-label">Security</span>
-                        <span className="detail-value" title={device.properties.security_patch}>{device.properties.security_patch || "N/A"}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="detail-label">Sales Code</span>
-                        <span className="detail-value" title={device.properties.sales_code}>{device.properties.sales_code || "N/A"}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="detail-label">PDA</span>
-                        <span className="detail-value" title={device.properties.pda}>{device.properties.pda || "N/A"}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="detail-label">SW Ver</span>
-                        <span className="detail-value" title={device.properties.sw_ver}>{device.properties.sw_ver || "N/A"}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="detail-label">CSC Ver</span>
-                        <span className="detail-value" title={device.properties.official_cscver}>{device.properties.official_cscver || "N/A"}</span>
-                      </div>
-                      <div className="detail-item" style={{ gridColumn: "span 3" }}>
-                        <span className="detail-label">Fingerprint</span>
-                        <span className="detail-value" title={device.properties.fingerprint}>{device.properties.fingerprint || "N/A"}</span>
-                      </div>
-                    </div>
-
-                    {/* Control Row */}
-                    <div className="device-card-controls">
-                      {/* Brightness Section */}
-                      <div>
-                        <div className="control-label" style={{ marginBottom: "2px" }}>Screen Brightness</div>
-                        <div className="control-row">
-                          <input 
-                            id={`brightness-range-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                            type="range" 
-                            min="0" 
-                            max="255" 
-                            value={brightnessValues[device.serial] ?? 128}
-                            onChange={(e) => setBrightnessValues({ ...brightnessValues, [device.serial]: parseInt(e.target.value) })}
-                            onMouseUp={() => handleSetBrightness(device.serial, brightnessValues[device.serial])}
-                            onTouchEnd={() => handleSetBrightness(device.serial, brightnessValues[device.serial])}
-                          />
-                          <span className="slider-val">{brightnessValues[device.serial] ?? 128}</span>
-                          <button 
-                            id={`bright-min-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                            onClick={() => handleSetBrightness(device.serial, 5)}
-                            style={{ padding: "2px 4px", fontSize: "0.625rem" }}
-                          >
-                            Min
-                          </button>
-                          <button 
-                            id={`bright-max-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                            onClick={() => handleSetBrightness(device.serial, 255)}
-                            style={{ padding: "2px 4px", fontSize: "0.625rem" }}
-                          >
-                            Max
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Timeout and Scrcpy Section */}
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: "8px", marginTop: "4px" }}>
-                        <div style={{ flex: 1 }}>
-                          <div className="control-label" style={{ marginBottom: "2px" }}>Screen Timeout</div>
-                          <div className="control-row" style={{ gap: "4px" }}>
-                            <select
-                              id={`timeout-select-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                              onChange={(e) => handleSetTimeout(device.serial, parseInt(e.target.value))}
-                              defaultValue="60000"
-                              style={{ height: "20px", padding: "0 14px 0 4px", fontSize: "0.625rem" }}
-                            >
-                              <option value="15000">15 sec</option>
-                              <option value="60000">1 min</option>
-                              <option value="300000">5 min</option>
-                              <option value="600000">10 min</option>
-                              <option value="1800000">30 min</option>
-                              <option value="2147483647">Keep Awake</option>
-                            </select>
-                            <button 
-                              id={`timeout-min-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                              onClick={() => handleSetTimeout(device.serial, 15000)}
-                              style={{ padding: "2px 4px", fontSize: "0.625rem" }}
-                            >
-                              Min
-                            </button>
-                            <button 
-                              id={`timeout-max-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                              onClick={() => handleSetTimeout(device.serial, 2147483647)}
-                              style={{ padding: "2px 4px", fontSize: "0.625rem" }}
-                            >
-                              Max
-                            </button>
-                          </div>
-                        </div>
-
-                        <button 
-                          id={`scrcpy-btn-${device.serial.replace(/[^a-zA-Z0-9]/g, "-")}`}
-                          onClick={() => handleStartScrcpy(device.serial)}
-                          style={{ height: "20px", padding: "0 8px", background: "#ffffff", color: "#000000", border: "1px solid #ffffff" }}
-                        >
-                          Mirror View
-                        </button>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 );
               })
