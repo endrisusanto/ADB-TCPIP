@@ -48,6 +48,16 @@ npm install
 npm run tauri dev
 ```
 
+To build the local installer with automatic npm dependency installation:
+
+```bash
+npm run build:local
+```
+
+On Linux, the script also installs the generated `.deb` or `.rpm` package according to the detected distribution. Other Linux distributions receive the AppImage in `~/.local/bin`.
+
+On Debian/Ubuntu, the same script also installs the Linux bundle dependencies (`libayatana-appindicator3-dev` and `librsvg2-dev`) when missing.
+
 ### Linux / Wayland Note
 The application programmatically forces the X11 backend (`GDK_BACKEND=x11`) and disables DMABUF rendering (`WEBKIT_DISABLE_DMABUF_RENDERER=1`) on Linux at launch. This prevents common WebKitGTK and GDK protocol errors on Wayland display servers. You can run the command normally without prepending environment overrides.
 

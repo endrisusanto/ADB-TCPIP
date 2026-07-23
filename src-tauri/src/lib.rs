@@ -9,6 +9,8 @@ use tauri::{
 pub struct DeviceProps {
     pub serial: String,
     pub model: String,
+    pub battery: String,
+    pub temperature: String,
     pub release: String,
     pub sdk: String,
     pub security_patch: String,
@@ -17,6 +19,7 @@ pub struct DeviceProps {
     pub sw_ver: String,
     pub official_cscver: String,
     pub fingerprint: String,
+    pub build_type: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -97,6 +100,9 @@ fn get_properties(serial: &str) -> DeviceProps {
     let mut sw_ver = String::new();
     let mut official_cscver = String::new();
     let mut fingerprint = String::new();
+    let mut build_type = String::new();
+    let mut battery = String::new();
+    let mut temperature = String::new();
 
     if let Ok(out) = run_adb(&["-s", serial, "shell", "getprop"]) {
         for line in out.lines() {
@@ -120,6 +126,11 @@ fn get_properties(serial: &str) -> DeviceProps {
                         "ril.sw_ver" => sw_ver = val.to_string(),
                         "ril.official_cscver" => official_cscver = val.to_string(),
                         "ro.build.fingerprint" => fingerprint = val.to_string(),
+                        "ro.build.type" | "ro.system.build.type" => {
+                            if build_type.is_empty() || key == "ro.build.type" {
+                                build_type = val.to_string();
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -127,9 +138,38 @@ fn get_properties(serial: &str) -> DeviceProps {
         }
     }
 
+    if build_type.is_empty() {
+        if fingerprint.contains("userdebug") {
+            build_type = "userdebug".to_string();
+        } else if fingerprint.contains(":user/") || fingerprint.contains("/user/") {
+            build_type = "user".to_string();
+        } else if fingerprint.contains("eng") {
+            build_type = "eng".to_string();
+        }
+    }
+
+    if let Ok(out) = run_adb(&["-s", serial, "shell", "dumpsys", "battery"]) {
+        for line in out.lines() {
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            match key.trim() {
+                "level" => battery = format!("{}%", value.trim()),
+                "temperature" => {
+                    if let Ok(value) = value.trim().parse::<f32>() {
+                        temperature = format!("{:.1}°C", value / 10.0);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     DeviceProps {
         serial: serial.to_string(),
         model,
+        battery,
+        temperature,
         release,
         sdk,
         security_patch,
@@ -138,6 +178,7 @@ fn get_properties(serial: &str) -> DeviceProps {
         sw_ver,
         official_cscver,
         fingerprint,
+        build_type,
     }
 }
 
@@ -233,6 +274,64 @@ async fn start_scrcpy(serial: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+async fn start_scrcpy_all(serials: Vec<String>) -> Result<usize, String> {
+    let mut launched = 0;
+    let cols = 4;
+    let win_w = 340;
+    let win_h = 640;
+
+    for (idx, serial) in serials.iter().enumerate() {
+        let col = idx % cols;
+        let row = idx / cols;
+        let x = (col * (win_w + 10)) as i32;
+        let y = (row * (win_h + 35)) as i32;
+
+        let child = Command::new("scrcpy")
+            .arg("-s")
+            .arg(serial)
+            .arg("--window-title")
+            .arg(format!("Mirror - {}", serial))
+            .arg("--window-x")
+            .arg(x.to_string())
+            .arg("--window-y")
+            .arg(y.to_string())
+            .arg("--window-width")
+            .arg(win_w.to_string())
+            .spawn();
+
+        if child.is_ok() {
+            launched += 1;
+        }
+    }
+
+    if launched == 0 && !serials.is_empty() {
+        return Err("Failed to launch scrcpy for any devices. Make sure scrcpy is installed.".to_string());
+    }
+
+    Ok(launched)
+}
+
+#[tauri::command]
+async fn get_device_screenshot(serial: String) -> Result<String, String> {
+    use base64::Engine;
+    let output = Command::new("adb")
+        .arg("-s")
+        .arg(&serial)
+        .arg("exec-out")
+        .arg("screencap")
+        .arg("-p")
+        .output()
+        .map_err(|e| format!("ADB exec error: {}", e))?;
+
+    if output.status.success() && !output.stdout.is_empty() {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&output.stdout);
+        Ok(format!("data:image/png;base64,{}", b64))
+    } else {
+        Err("Failed to capture screenshot".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -291,7 +390,9 @@ pub fn run() {
             disconnect_wireless,
             set_brightness,
             set_timeout,
-            start_scrcpy
+            start_scrcpy,
+            start_scrcpy_all,
+            get_device_screenshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
