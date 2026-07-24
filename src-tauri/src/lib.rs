@@ -32,6 +32,7 @@ pub struct DeviceInfo {
 
 fn run_adb(args: &[&str]) -> Result<String, String> {
     let output = Command::new("adb")
+        .env("ADB_MDNS_OPENSCREEN", "0")
         .args(args)
         .output()
         .map_err(|e| format!("Failed to execute adb: {}", e))?;
@@ -223,11 +224,20 @@ async fn connect_wireless(serial: String, ip: String) -> Result<String, String> 
         return Err("Device IP address is unknown. Connect device to Wi-Fi.".to_string());
     }
     
-    // 1. Restart adb in tcpip mode on port 5555
-    run_adb(&["-s", &serial, "tcpip", "5555"])?;
+    // Ensure adb daemon is alive before switching mode
+    let _ = run_adb(&["start-server"]);
     
-    // 2. Wait 1.5 seconds for adbd to restart
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    // 1. Restart adb in tcpip mode on port 5555
+    let tcpip_res = run_adb(&["-s", &serial, "tcpip", "5555"]);
+    if let Err(e) = tcpip_res {
+        // If error mentions daemon died, restart daemon and retry once
+        let _ = run_adb(&["start-server"]);
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        let _ = run_adb(&["-s", &serial, "tcpip", "5555"]);
+    }
+    
+    // 2. Wait 2 seconds for adbd service restart on target phone
+    std::thread::sleep(std::time::Duration::from_millis(2000));
     
     // 3. Connect via adb connect
     let connect_target = format!("{}:5555", ip);
@@ -241,6 +251,92 @@ async fn disconnect_wireless(ip: String) -> Result<String, String> {
     let target = format!("{}:5555", ip);
     let res = run_adb(&["disconnect", &target])?;
     Ok(res)
+}
+
+#[tauri::command]
+async fn send_key_event(serials: Vec<String>, keycode: String) -> Result<(), String> {
+    let mut handles = Vec::new();
+    for s in serials {
+        let kc = keycode.clone();
+        handles.push(std::thread::spawn(move || {
+            let _ = run_adb(&["-s", &s, "shell", "input", "keyevent", &kc]);
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn send_swipe_event(serials: Vec<String>, x1: i32, y1: i32, x2: i32, y2: i32, duration_ms: i32) -> Result<(), String> {
+    let x1_str = x1.to_string();
+    let y1_str = y1.to_string();
+    let x2_str = x2.to_string();
+    let y2_str = y2.to_string();
+    let dur_str = duration_ms.to_string();
+    let mut handles = Vec::new();
+    for s in serials {
+        let x1_c = x1_str.clone();
+        let y1_c = y1_str.clone();
+        let x2_c = x2_str.clone();
+        let y2_c = y2_str.clone();
+        let dur_c = dur_str.clone();
+        handles.push(std::thread::spawn(move || {
+            let _ = run_adb(&["-s", &s, "shell", "input", "swipe", &x1_c, &y1_c, &x2_c, &y2_c, &dur_c]);
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn send_tap_event(serials: Vec<String>, x: i32, y: i32) -> Result<(), String> {
+    let x_str = x.to_string();
+    let y_str = y.to_string();
+    let mut handles = Vec::new();
+    for s in serials {
+        let xc = x_str.clone();
+        let yc = y_str.clone();
+        handles.push(std::thread::spawn(move || {
+            let _ = run_adb(&["-s", &s, "shell", "input", "tap", &xc, &yc]);
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_url(serials: Vec<String>, url: String) -> Result<(), String> {
+    let clean_url = url.trim().to_string();
+    if clean_url.is_empty() {
+        return Err("URL cannot be empty".to_string());
+    }
+    let mut handles = Vec::new();
+    for s in serials {
+        let u = clean_url.clone();
+        handles.push(std::thread::spawn(move || {
+            let _ = run_adb(&[
+                "-s",
+                &s,
+                "shell",
+                "am",
+                "start",
+                "-a",
+                "android.intent.action.VIEW",
+                "-d",
+                &u,
+            ]);
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -392,7 +488,11 @@ pub fn run() {
             set_timeout,
             start_scrcpy,
             start_scrcpy_all,
-            get_device_screenshot
+            get_device_screenshot,
+            send_key_event,
+            send_swipe_event,
+            send_tap_event,
+            open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

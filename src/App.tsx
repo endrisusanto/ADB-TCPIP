@@ -75,6 +75,72 @@ function getBuildTypeBadge(buildType: string) {
   return type ? <span className="badge badge-default">{type}</span> : null;
 }
 
+function getBatteryBadge(battStr: string) {
+  if (!battStr || battStr === "N/A") return <span style={{ color: "#777" }}>N/A</span>;
+  const num = parseInt(battStr.replace(/[^0-9]/g, ""), 10);
+  if (isNaN(num)) return <span>{battStr}</span>;
+  
+  let color = "#22c55e"; // Green for >= 50%
+  let bg = "rgba(34, 197, 94, 0.15)";
+  if (num < 20) {
+    color = "#ef4444"; // Red for < 20%
+    bg = "rgba(239, 68, 68, 0.2)";
+  } else if (num < 50) {
+    color = "#eab308"; // Yellow for 20-49%
+    bg = "rgba(234, 179, 8, 0.18)";
+  }
+
+  return (
+    <span
+      style={{
+        padding: "2px 6px",
+        borderRadius: "3px",
+        fontSize: "0.65rem",
+        fontWeight: 700,
+        fontFamily: "var(--font-mono)",
+        color,
+        backgroundColor: bg,
+        border: `1px solid ${color}44`
+      }}
+    >
+      {battStr}
+    </span>
+  );
+}
+
+function getTempBadge(tempStr: string) {
+  if (!tempStr || tempStr === "N/A") return <span style={{ color: "#777" }}>N/A</span>;
+  const num = parseFloat(tempStr.replace(/[^0-9.]/g, ""));
+  if (isNaN(num)) return <span>{tempStr}</span>;
+
+  let color = "#3b82f6"; // Cool Blue for < 35 C
+  let bg = "rgba(59, 130, 246, 0.15)";
+  if (num >= 42) {
+    color = "#ef4444"; // Hot Red for >= 42 C
+    bg = "rgba(239, 68, 68, 0.25)";
+  } else if (num >= 35) {
+    color = "#f97316"; // Warm Orange for 35-41.9 C
+    bg = "rgba(249, 115, 22, 0.2)";
+  }
+
+  return (
+    <span
+      style={{
+        padding: "2px 6px",
+        borderRadius: "3px",
+        fontSize: "0.65rem",
+        fontWeight: 700,
+        fontFamily: "var(--font-mono)",
+        color,
+        backgroundColor: bg,
+        border: `1px solid ${color}44`
+      }}
+    >
+      {tempStr}
+    </span>
+  );
+}
+
 function App() {
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
@@ -87,11 +153,66 @@ function App() {
   // ponytail: view mode toggle (cards vs table vs grid_wall)
   const [viewMode, setViewMode] = useState<"cards" | "table" | "grid_wall">("grid_wall");
   const [selectedDeviceSerial, setSelectedDeviceSerial] = useState<string | null>(null);
+  const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
   const [screenPreviews, setScreenPreviews] = useState<Record<string, string>>({});
   const [isCapturingScreens, setIsCapturingScreens] = useState<boolean>(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+  const [youtubeUrl, setYoutubeUrl] = useState<string>("");
   
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const logIdCounter = useRef<number>(0);
+
+  const handleOpenYoutube = async (urlToPlay?: string) => {
+    const targetUrl = urlToPlay || youtubeUrl;
+    if (!targetUrl || !targetUrl.trim()) {
+      addLog("Please enter a valid YouTube URL", "error");
+      return;
+    }
+    const targetSerials = devices.map((d) => d.serial);
+    if (targetSerials.length === 0) {
+      addLog("No connected devices to play YouTube URL", "error");
+      return;
+    }
+    addLog(`Broadcasting YouTube URL to ${targetSerials.length} device(s)...`, "info");
+    try {
+      await invoke("open_url", { serials: targetSerials, url: targetUrl.trim() });
+      addLog(`YouTube URL opened on ${targetSerials.length} device(s)`, "success");
+    } catch (err: any) {
+      addLog(`Failed to open YouTube URL: ${err.toString()}`, "error");
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedSerials.length === devices.length) {
+      setSelectedSerials([]);
+    } else {
+      setSelectedSerials(devices.map((d) => d.serial));
+    }
+  };
+
+  const toggleSelectDevice = (serial: string) => {
+    setSelectedSerials((prev) =>
+      prev.includes(serial) ? prev.filter((s) => s !== serial) : [...prev, serial]
+    );
+  };
+
+  const handleBatchBrightness = async (val: number) => {
+    if (selectedSerials.length === 0) return;
+    addLog(`Setting brightness to ${val} for ${selectedSerials.length} selected device(s) concurrently...`, "info");
+    await Promise.all(selectedSerials.map((serial) => handleSetBrightness(serial, val)));
+  };
+
+  const handleBatchTimeout = async (timeoutMs: number) => {
+    if (selectedSerials.length === 0) return;
+    addLog(`Setting screen timeout for ${selectedSerials.length} selected device(s) concurrently...`, "info");
+    await Promise.all(selectedSerials.map((serial) => handleSetTimeout(serial, timeoutMs)));
+  };
+
+  const handleBatchScrcpy = async () => {
+    if (selectedSerials.length === 0) return;
+    addLog(`Launching scrcpy for ${selectedSerials.length} selected device(s) concurrently...`, "info");
+    await Promise.all(selectedSerials.map((serial) => handleStartScrcpy(serial)));
+  };
 
   const addLog = (text: string, type: "info" | "success" | "error" = "info") => {
     const time = new Date().toLocaleTimeString();
@@ -193,11 +314,13 @@ function App() {
       return;
     }
 
-    addLog(`Attempting to connect ${usbDevices.length} USB device(s) to wireless...`, "info");
+    addLog(`Attempting to connect ${usbDevices.length} USB device(s) to wireless sequentially...`, "info");
     for (const d of usbDevices) {
       const ip = manualIps[d.serial];
       if (ip && ip.trim()) {
         await handleConnectWireless(d.serial, ip);
+        // Safety delay between devices to allow adbd daemon to restart cleanly
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       } else {
         addLog(`[${d.serial}] Skipped: No IP address detected. Please set it manually.`, "error");
       }
@@ -236,21 +359,7 @@ function App() {
     }
   };
 
-  const handleStartScrcpyAll = async (targetDevices?: DeviceInfo[]) => {
-    const listToMirror = targetDevices || devices;
-    if (listToMirror.length === 0) {
-      addLog("No connected devices to mirror.", "error");
-      return;
-    }
-    const serials = listToMirror.map((d) => d.serial);
-    addLog(`Launching scrcpy grid mirror view for ${serials.length} device(s)...`, "info");
-    try {
-      const count = await invoke<number>("start_scrcpy_all", { serials });
-      addLog(`scrcpy grid mirror view launched for ${count} device(s).`, "success");
-    } catch (err: any) {
-      addLog(`Failed to start scrcpy grid: ${err.toString()}`, "error");
-    }
-  };
+
 
   const clearLogs = () => {
     setLogs([]);
@@ -269,7 +378,7 @@ function App() {
       <header>
         <div className="brand">
           <img src="/adb.png" alt="ADB" className="app-logo" />
-          <h1 id="app-title">ADB Wireless Device Farm</h1>
+          <h1 id="app-title">Ternak Buzzer</h1>
           <p>Utility Dashboard</p>
         </div>
         <div className="global-actions">
@@ -279,8 +388,12 @@ function App() {
           <button id="connect-all-btn" className="primary" onClick={handleConnectAllWireless} disabled={loading || usbCount === 0}>
             Connect All Wireless
           </button>
-          <button id="mirror-all-btn" onClick={() => { setViewMode("grid_wall"); handleStartScrcpyAll(); }} disabled={loading || devices.length === 0}>
-            Mirror All Grid
+          <button
+            id="toggle-sidebar-btn"
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            title={isSidebarOpen ? "Minimize right panel" : "Expand right panel"}
+          >
+            {isSidebarOpen ? "▶ Hide Panel" : "◀ Show Panel"}
           </button>
         </div>
       </header>
@@ -345,7 +458,9 @@ function App() {
               <div className="phone-wall-container">
                 <div
                   className="phone-wall-grid"
-                  style={{ gridTemplateColumns: `repeat(${Math.min(Math.max(devices.length, 1), 8)}, minmax(0, 1fr))` }}
+                  style={{
+                    gridTemplateColumns: `repeat(${Math.min(Math.max(devices.length, 1), 10)}, minmax(0, 1fr))`
+                  }}
                 >
                   {devices.map((device, idx) => {
                     const isWireless = device.connection_type === "wireless";
@@ -358,9 +473,17 @@ function App() {
                         className={`phone-frame ${isFocused ? "focused" : ""}`}
                         onClick={() => setSelectedDeviceSerial(device.serial)}
                       >
-                        <span className={`phone-conn-tag ${isWireless ? "wireless" : "usb"}`}>
-                          {device.connection_type.toUpperCase()}
-                        </span>
+                        <div className="phone-top-stats-left">
+                          {getBuildTypeBadge(device.properties.build_type)}
+                          <span className={`phone-conn-tag ${isWireless ? "wireless" : "usb"}`}>
+                            {device.connection_type.toUpperCase()}
+                          </span>
+                        </div>
+
+                        <div className="phone-top-stats-right">
+                          {getTempBadge(device.properties.temperature)}
+                          {getBatteryBadge(device.properties.battery)}
+                        </div>
 
                         <div className="phone-screen-header">
                           <div className="phone-index-num">{indexStr}</div>
@@ -430,7 +553,148 @@ function App() {
                       <button className="btn-text" onClick={() => setSelectedDeviceSerial(null)}>✕</button>
                     </div>
 
-                    <div className="drawer-section-title">Quick Actions</div>
+                    <div className="drawer-section-title">🎮 Global Broadcast Gesture Pad</div>
+                    <div style={{ fontSize: "0.55rem", color: "#22c55e", marginBottom: "4px" }}>
+                      *Gestures on this pad will broadcast to ALL connected devices ({devices.length})
+                    </div>
+
+                    {/* Interactive Touchpad inside Control Drawer */}
+                    <div
+                      className="touchpad-area"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const startX = Math.round(((e.clientX - rect.left) / rect.width) * 1080);
+                        const startY = Math.round(((e.clientY - rect.top) / rect.height) * 2400);
+                        const startTime = Date.now();
+
+                        const handleMouseUp = (upEvent: MouseEvent) => {
+                          window.removeEventListener("mouseup", handleMouseUp);
+                          const endX = Math.round(((upEvent.clientX - rect.left) / rect.width) * 1080);
+                          const endY = Math.round(((upEvent.clientY - rect.top) / rect.height) * 2400);
+                          const durationMs = Math.max(Date.now() - startTime, 100);
+                          const dist = Math.hypot(endX - startX, endY - startY);
+                          const targetSerials = devices.map(d => d.serial);
+
+                          if (dist < 20) {
+                            // Tap action
+                            invoke("send_tap_event", { serials: targetSerials, x: startX, y: startY });
+                            addLog(`[Global Touch] Tap at (${startX}, ${startY}) broadcasted to ${targetSerials.length} device(s)`, "info");
+                          } else {
+                            // Drag / Swipe action
+                            invoke("send_swipe_event", { serials: targetSerials, x1: startX, y1: startY, x2: endX, y2: endY, durationMs });
+                            addLog(`[Global Touch] Drag (${startX},${startY}) ➔ (${endX},${endY}) broadcasted to ${targetSerials.length} device(s)`, "info");
+                          }
+                        };
+                        window.addEventListener("mouseup", handleMouseUp);
+                      }}
+                    >
+                      {screenPreviews[selectedDevice.serial] ? (
+                        <img
+                          src={screenPreviews[selectedDevice.serial]}
+                          alt="Control Preview"
+                          className="touchpad-preview-img"
+                        />
+                      ) : (
+                        <div className="touchpad-placeholder">
+                          <span>Interactive Touchscreen</span>
+                          <span style={{ fontSize: "0.55rem", opacity: 0.6 }}>Click / Drag anywhere to control all devices</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Quick Swipe Controls */}
+                    <div className="drawer-section-title" style={{ marginTop: "4px" }}>Global Swipes</div>
+                    <div className="gesture-btn-grid">
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_swipe_event", { serials: targetSerials, x1: 540, y1: 1800, x2: 540, y2: 600, durationMs: 300 });
+                        addLog(`[Global Gesture] Swipe Up sent to ${targetSerials.length} device(s)`, "info");
+                      }}>⬆️ Up</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_swipe_event", { serials: targetSerials, x1: 540, y1: 600, x2: 540, y2: 1800, durationMs: 300 });
+                        addLog(`[Global Gesture] Swipe Down sent to ${targetSerials.length} device(s)`, "info");
+                      }}>⬇️ Down</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_swipe_event", { serials: targetSerials, x1: 900, y1: 1200, x2: 180, y2: 1200, durationMs: 300 });
+                        addLog(`[Global Gesture] Swipe Left sent to ${targetSerials.length} device(s)`, "info");
+                      }}>⬅️ Left</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_swipe_event", { serials: targetSerials, x1: 180, y1: 1200, x2: 900, y2: 1200, durationMs: 300 });
+                        addLog(`[Global Gesture] Swipe Right sent to ${targetSerials.length} device(s)`, "info");
+                      }}>➡️ Right</button>
+                    </div>
+
+                    {/* Global Hardware Keys */}
+                    <div className="drawer-section-title" style={{ marginTop: "4px" }}>Global Hardware Keys & Volume</div>
+                    <div className="gesture-btn-grid">
+                      <button className="primary" onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_key_event", { serials: targetSerials, keycode: "3" });
+                        addLog(`[Global Gesture] HOME sent to ${targetSerials.length} device(s)`, "info");
+                      }}>🏠 Home</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_key_event", { serials: targetSerials, keycode: "4" });
+                        addLog(`[Global Gesture] BACK sent to ${targetSerials.length} device(s)`, "info");
+                      }}>◀️ Back</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_key_event", { serials: targetSerials, keycode: "187" });
+                        addLog(`[Global Gesture] RECENT APPS sent to ${targetSerials.length} device(s)`, "info");
+                      }}>▢ Recents</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_key_event", { serials: targetSerials, keycode: "26" });
+                        addLog(`[Global Gesture] POWER sent to ${targetSerials.length} device(s)`, "info");
+                      }}>⚡ Power</button>
+                    </div>
+
+                    {/* Global Volume Control Row */}
+                    <div className="gesture-btn-grid" style={{ marginTop: "4px" }}>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_key_event", { serials: targetSerials, keycode: "24" }); // KEYCODE_VOLUME_UP
+                        addLog(`[Global Volume] Volume UP sent to ${targetSerials.length} device(s)`, "info");
+                      }}>🔊 Vol +</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_key_event", { serials: targetSerials, keycode: "25" }); // KEYCODE_VOLUME_DOWN
+                        addLog(`[Global Volume] Volume DOWN sent to ${targetSerials.length} device(s)`, "info");
+                      }}>🔉 Vol -</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_key_event", { serials: targetSerials, keycode: "164" }); // KEYCODE_VOLUME_MUTE
+                        addLog(`[Global Volume] Volume MUTE sent to ${targetSerials.length} device(s)`, "info");
+                      }}>🔇 Mute</button>
+                      <button onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("send_key_event", { serials: targetSerials, keycode: "85" }); // KEYCODE_MEDIA_PLAY_PAUSE
+                        addLog(`[Global Media] Play/Pause sent to ${targetSerials.length} device(s)`, "info");
+                      }}>⏯️ Play/Pause</button>
+                    </div>
+
+                    {/* Global YouTube Broadcast Section */}
+                    <div className="drawer-section-title" style={{ marginTop: "8px" }}>▶ Broadcast YouTube / Web URL</div>
+                    <div className="url-broadcast-box">
+                      <input
+                        type="text"
+                        placeholder="https://youtu.be/..."
+                        value={youtubeUrl}
+                        onChange={(e) => setYoutubeUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleOpenYoutube();
+                        }}
+                      />
+                      <button className="primary" onClick={() => handleOpenYoutube()}>
+                        Play All
+                      </button>
+                    </div>
+
+                    <div className="drawer-section-title" style={{ marginTop: "8px" }}>Quick Actions</div>
                     <div className="drawer-action-list">
                       <button className="primary" onClick={() => handleStartScrcpy(selectedDevice.serial)}>📺 Launch scrcpy Mirror</button>
                       <button onClick={() => handleSetBrightness(selectedDevice.serial, 5)}>🌙 Dim Screen (Min)</button>
@@ -453,10 +717,38 @@ function App() {
                 )}
               </div>
             ) : viewMode === "table" ? (
-              <div className="table-container">
+              <div className="table-container" style={{ display: "flex", flexDirection: "column" }}>
+                {selectedSerials.length > 0 && (
+                  <div className="batch-control-bar">
+                    <span className="batch-selected-count">
+                      {selectedSerials.length} device(s) selected
+                    </span>
+                    <div className="batch-actions">
+                      <button className="primary" onClick={handleBatchScrcpy}>
+                        📺 Mirror Selected ({selectedSerials.length})
+                      </button>
+                      <button onClick={() => handleBatchBrightness(5)}>🌙 Dim (Min)</button>
+                      <button onClick={() => handleBatchBrightness(255)}>☀️ Max Brightness</button>
+                      <button onClick={() => handleBatchTimeout(2147483647)}>⏰ Keep Awake</button>
+                      <button onClick={() => handleBatchTimeout(15000)}>⏱️ 15s Timeout</button>
+                      <button className="btn-text" onClick={() => setSelectedSerials([])}>
+                        ✕ Deselect All
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <table className="device-grid-table">
                   <thead>
                     <tr>
+                      <th style={{ width: "32px", textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={devices.length > 0 && selectedSerials.length === devices.length}
+                          onChange={toggleSelectAll}
+                          title="Select / Deselect All"
+                        />
+                      </th>
+                      <th style={{ width: "36px", textAlign: "center" }}>#</th>
                       <th>Model</th>
                       <th>Serial</th>
                       <th>Connection</th>
@@ -472,12 +764,24 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {devices.map((device) => {
+                    {devices.map((device, idx) => {
                       const isWireless = device.connection_type === "wireless";
                       const currentIp = manualIps[device.serial] || "";
+                      const isSelected = selectedSerials.includes(device.serial);
+                      const indexStr = String(idx + 1).padStart(2, "0");
 
                       return (
-                        <tr key={device.serial}>
+                        <tr key={device.serial} className={isSelected ? "row-selected" : ""}>
+                          <td style={{ textAlign: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectDevice(device.serial)}
+                            />
+                          </td>
+                          <td style={{ textAlign: "center", fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--text-muted)", fontSize: "0.6875rem" }}>
+                            {indexStr}
+                          </td>
                           <td>
                             <span
                               className="device-model-badge"
@@ -508,8 +812,8 @@ function App() {
                               device.ip || "N/A"
                             )}
                           </td>
-                          <td>{device.properties.battery || "N/A"}</td>
-                          <td>{device.properties.temperature || "N/A"}</td>
+                          <td>{getBatteryBadge(device.properties.battery)}</td>
+                          <td>{getTempBadge(device.properties.temperature)}</td>
                           <td>
                             <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                               <input
@@ -591,19 +895,6 @@ function App() {
                         {label} Devices
                       </span>
                       <span className="accordion-meta">
-                        {groupDevices.length > 0 && (
-                          <span
-                            className="badge"
-                            style={{ cursor: "pointer", textTransform: "none" }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStartScrcpyAll(groupDevices);
-                            }}
-                            title={`Mirror all ${groupDevices.length} ${label} devices in grid`}
-                          >
-                            Mirror Grid
-                          </span>
-                        )}
                         <span className="accordion-count">{groupDevices.length}</span>
                         <span className={`accordion-chevron ${isOpen ? "open" : ""}`}>▾</span>
                       </span>
@@ -774,8 +1065,8 @@ function App() {
           </div>
         </section>
 
-        {/* Right Column: Stats & Logs */}
-        <aside className="sidebar-logs">
+        {/* Right Column: Stats & Logs & Global Gesture Pad */}
+        <aside className={`sidebar-logs ${!isSidebarOpen ? "collapsed" : ""}`}>
           {/* Summary Panel */}
           <div className="summary-panel">
             <h3 className="panel-title">Statistics</h3>
@@ -795,6 +1086,174 @@ function App() {
             </div>
           </div>
 
+          {/* Global Gesture Touchpad Panel */}
+          <div className="gesture-panel">
+            <div className="console-header" style={{ borderTop: "none" }}>
+              <span>🎮 Global Gesture Pad ({devices.length})</span>
+            </div>
+            
+            {/* Interactive Screen Touchpad Canvas */}
+            <div
+              className="touchpad-area"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const rect = e.currentTarget.getBoundingClientRect();
+                const startX = Math.round(((e.clientX - rect.left) / rect.width) * 1080);
+                const startY = Math.round(((e.clientY - rect.top) / rect.height) * 2400);
+                const startTime = Date.now();
+
+                const handleMouseUp = (upEvent: MouseEvent) => {
+                  window.removeEventListener("mouseup", handleMouseUp);
+                  const endX = Math.round(((upEvent.clientX - rect.left) / rect.width) * 1080);
+                  const endY = Math.round(((upEvent.clientY - rect.top) / rect.height) * 2400);
+                  const durationMs = Math.max(Date.now() - startTime, 100);
+                  const dist = Math.hypot(endX - startX, endY - startY);
+                  const targetSerials = devices.map(d => d.serial);
+
+                  if (dist < 20) {
+                    // Tap action
+                    invoke("send_tap_event", { serials: targetSerials, x: startX, y: startY });
+                    addLog(`[Global Touch] Tap at (${startX}, ${startY}) broadcasted to ${targetSerials.length} device(s)`, "info");
+                  } else {
+                    // Drag / Swipe action
+                    invoke("send_swipe_event", { serials: targetSerials, x1: startX, y1: startY, x2: endX, y2: endY, durationMs });
+                    addLog(`[Global Touch] Drag (${startX},${startY}) ➔ (${endX},${endY}) broadcasted to ${targetSerials.length} device(s)`, "info");
+                  }
+                };
+                window.addEventListener("mouseup", handleMouseUp);
+              }}
+            >
+              {/* Reference Preview Image if available */}
+              {devices.length > 0 && screenPreviews[devices[0].serial] ? (
+                <img
+                  src={screenPreviews[devices[0].serial]}
+                  alt="Gesture Canvas"
+                  className="touchpad-preview-img"
+                />
+              ) : (
+                <div className="touchpad-placeholder">
+                  <span>Interactive Touchscreen</span>
+                  <span style={{ fontSize: "0.55rem", opacity: 0.6 }}>Click / Drag anywhere to control all devices</span>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Swipe & Nav Bar */}
+            <div className="gesture-btn-grid">
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_swipe_event", { serials: targetSerials, x1: 540, y1: 1800, x2: 540, y2: 600, durationMs: 300 });
+                addLog(`[Global Gesture] Swipe Up sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                ⬆️ Swipe Up
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_swipe_event", { serials: targetSerials, x1: 540, y1: 600, x2: 540, y2: 1800, durationMs: 300 });
+                addLog(`[Global Gesture] Swipe Down sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                ⬇️ Swipe Down
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_swipe_event", { serials: targetSerials, x1: 900, y1: 1200, x2: 180, y2: 1200, durationMs: 300 });
+                addLog(`[Global Gesture] Swipe Left sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                ⬅️ Swipe Left
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_swipe_event", { serials: targetSerials, x1: 180, y1: 1200, x2: 900, y2: 1200, durationMs: 300 });
+                addLog(`[Global Gesture] Swipe Right sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                ➡️ Swipe Right
+              </button>
+            </div>
+
+            {/* Navigation Keys */}
+            <div className="gesture-btn-grid" style={{ marginTop: "4px" }}>
+              <button className="primary" onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_key_event", { serials: targetSerials, keycode: "3" }); // KEYCODE_HOME
+                addLog(`[Global Gesture] HOME key sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                🏠 Home
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_key_event", { serials: targetSerials, keycode: "4" }); // KEYCODE_BACK
+                addLog(`[Global Gesture] BACK key sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                ◀️ Back
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_key_event", { serials: targetSerials, keycode: "187" }); // KEYCODE_APP_SWITCH
+                addLog(`[Global Gesture] RECENT APPS sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                ▢ Recents
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_key_event", { serials: targetSerials, keycode: "26" }); // KEYCODE_POWER
+                addLog(`[Global Gesture] POWER key sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                ⚡ Power
+              </button>
+            </div>
+
+            {/* Global Volume & Media Controls */}
+            <div className="gesture-btn-grid" style={{ marginTop: "4px" }}>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_key_event", { serials: targetSerials, keycode: "24" }); // KEYCODE_VOLUME_UP
+                addLog(`[Global Volume] Volume UP sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                🔊 Vol +
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_key_event", { serials: targetSerials, keycode: "25" }); // KEYCODE_VOLUME_DOWN
+                addLog(`[Global Volume] Volume DOWN sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                🔉 Vol -
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_key_event", { serials: targetSerials, keycode: "164" }); // KEYCODE_VOLUME_MUTE
+                addLog(`[Global Volume] Volume MUTE sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                🔇 Mute
+              </button>
+              <button onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("send_key_event", { serials: targetSerials, keycode: "85" }); // KEYCODE_MEDIA_PLAY_PAUSE
+                addLog(`[Global Media] Play/Pause sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                ⏯️ Play/Pause
+              </button>
+            </div>
+
+            {/* Global YouTube Broadcast Box */}
+            <div style={{ marginTop: "8px" }}>
+              <div className="drawer-section-title" style={{ marginBottom: "4px" }}>▶ Broadcast YouTube / Web URL</div>
+              <div className="url-broadcast-box">
+                <input
+                  type="text"
+                  placeholder="https://youtu.be/..."
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleOpenYoutube();
+                  }}
+                />
+                <button className="primary" onClick={() => handleOpenYoutube()}>
+                  Play All
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* Running Logs */}
           <div className="console-header">
             <span>Running Log</span>
@@ -802,7 +1261,7 @@ function App() {
               [ Clear Log ]
             </button>
           </div>
-          <div className="log-panel">
+          <div className="log-panel" style={{ flex: "0 0 160px" }}>
             {logs.length === 0 ? (
               <div style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No log output.</div>
             ) : (
