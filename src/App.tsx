@@ -653,8 +653,8 @@ function App() {
                       }}>⚡ Power</button>
                     </div>
 
-                    {/* Global Volume Control Row */}
-                    <div className="gesture-btn-grid" style={{ marginTop: "4px" }}>
+                    {/* Global Volume & Display Controls Row */}
+                    <div className="gesture-btn-grid-5" style={{ marginTop: "4px" }}>
                       <button onClick={() => {
                         const targetSerials = devices.map(d => d.serial);
                         invoke("send_key_event", { serials: targetSerials, keycode: "24" }); // KEYCODE_VOLUME_UP
@@ -675,6 +675,11 @@ function App() {
                         invoke("send_key_event", { serials: targetSerials, keycode: "85" }); // KEYCODE_MEDIA_PLAY_PAUSE
                         addLog(`[Global Media] Play/Pause sent to ${targetSerials.length} device(s)`, "info");
                       }}>⏯️ Play/Pause</button>
+                      <button title="Toggle Lock Screen Orientation (Auto-Rotate)" onClick={() => {
+                        const targetSerials = devices.map(d => d.serial);
+                        invoke("toggle_screen_orientation", { serials: targetSerials });
+                        addLog(`[Global Display] Toggle Orientation Lock sent to ${targetSerials.length} device(s)`, "info");
+                      }}>🔒 Orient</button>
                     </div>
 
                     {/* Global YouTube Broadcast Section */}
@@ -1203,7 +1208,7 @@ function App() {
             </div>
 
             {/* Global Volume & Media Controls */}
-            <div className="gesture-btn-grid" style={{ marginTop: "4px" }}>
+            <div className="gesture-btn-grid-5" style={{ marginTop: "4px" }}>
               <button onClick={() => {
                 const targetSerials = devices.map(d => d.serial);
                 invoke("send_key_event", { serials: targetSerials, keycode: "24" }); // KEYCODE_VOLUME_UP
@@ -1231,6 +1236,13 @@ function App() {
                 addLog(`[Global Media] Play/Pause sent to ${targetSerials.length} device(s)`, "info");
               }}>
                 ⏯️ Play/Pause
+              </button>
+              <button title="Toggle Lock Screen Orientation (Auto-Rotate)" onClick={() => {
+                const targetSerials = devices.map(d => d.serial);
+                invoke("toggle_screen_orientation", { serials: targetSerials });
+                addLog(`[Global Display] Toggle Orientation Lock sent to ${targetSerials.length} device(s)`, "info");
+              }}>
+                🔒 Orient
               </button>
             </div>
 

@@ -229,7 +229,7 @@ async fn connect_wireless(serial: String, ip: String) -> Result<String, String> 
     
     // 1. Restart adb in tcpip mode on port 5555
     let tcpip_res = run_adb(&["-s", &serial, "tcpip", "5555"]);
-    if let Err(e) = tcpip_res {
+    if let Err(_) = tcpip_res {
         // If error mentions daemon died, restart daemon and retry once
         let _ = run_adb(&["start-server"]);
         std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -428,6 +428,24 @@ async fn get_device_screenshot(serial: String) -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+async fn toggle_screen_orientation(serials: Vec<String>) -> Result<(), String> {
+    // ponytail: toggle accelerometer_rotation setting (1: auto-rotate, 0: locked) across devices in parallel
+    let mut handles = Vec::new();
+    for s in serials {
+        handles.push(std::thread::spawn(move || {
+            if let Ok(out) = run_adb(&["-s", &s, "shell", "settings", "get", "system", "accelerometer_rotation"]) {
+                let next_val = if out.trim() == "0" { "1" } else { "0" };
+                let _ = run_adb(&["-s", &s, "shell", "settings", "put", "system", "accelerometer_rotation", next_val]);
+            }
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -492,7 +510,8 @@ pub fn run() {
             send_key_event,
             send_swipe_event,
             send_tap_event,
-            open_url
+            open_url,
+            toggle_screen_orientation
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

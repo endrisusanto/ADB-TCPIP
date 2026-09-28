@@ -283,6 +283,17 @@ header {
   padding: 4px 2px;
 }
 
+.gesture-btn-grid-5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.gesture-btn-grid-5 button {
+  font-size: 0.58rem;
+  padding: 4px 1px;
+}
+
 .url-broadcast-box {
   display: flex;
   gap: 4px;
